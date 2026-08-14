@@ -10,6 +10,13 @@ A production-grade backend application for **Bank Ledger**, built with **Node.js
 - **User Authentication**:
   - **Registration (`POST /api/auth/register`)**: User registration with input validation, duplicate email checks, password hashing, JWT generation, and HTTP cookie placement.
   - **Login (`POST /api/auth/login`)**: Secure authentication via email/password, matching hashed passwords via schema instance methods.
+- **Authentication Middleware (`authMiddleware`)**:
+  - Centralized route protection middleware verifying JWT tokens extracted from HTTP cookies or the `Authorization` header (`Bearer <token>`).
+  - Attaches the verified `User` object directly to `req.user` for protected downstream handlers.
+- **Account Management & Ledger Base**:
+  - **Create Account (`POST /api/account/createAccount`)**: Secure route allowing authenticated users to create bank accounts.
+  - Accounts linked directly to `User` ObjectId with customizable currency (`INR` default) and status control (`ACTIVE`, `FROZEN`, `CLOSED`).
+  - Optimized database indexing (including single & composite indexes) to handle high-concurrency parallel queries efficiently.
 - **Security & Data Protection**:
   - Automatic password hashing before saving users via Mongoose `pre('save')` hook using `bcryptjs`.
   - Hidden password field by default (`select: false`) in Mongoose schema to prevent leakages.
@@ -45,15 +52,19 @@ BANK_LEDGER/
 │   │   ├── config/
 │   │   │   └── db.js               # Database connection configuration & DNS resolver
 │   │   ├── controllers/
+│   │   │   ├── account.controller.js # Bank account creation & management handlers
 │   │   │   └── auth.controller.js  # Controller handling registration & login logic
-│   │   ├── middleware/             # Custom Express middlewares
+│   │   ├── middleware/
+│   │   │   └── auth.middleware.js  # JWT authentication & route protection middleware
 │   │   ├── models/
+│   │   │   ├── account.model.js    # Bank account Mongoose schema & indexing
 │   │   │   └── user.model.js       # User Mongoose schema, hooks & comparison methods
 │   │   ├── routes/
+│   │   │   ├── account.routes.js   # Account API endpoints router
 │   │   │   └── auth.routes.js      # Auth API endpoints router
 │   │   ├── services/
 │   │   │   └── email.service.js    # Nodemailer transporter & email templates
-│   │   └── app.js                  # Express App configuration & middleware bindings
+│   │   └── app.js                  # Express App configuration & route bindings
 │   ├── .env                        # Environment variables file (Git ignored)
 │   ├── package.json                # Project dependencies & npm scripts
 │   └── server.js                   # Application entry point & server listener
@@ -68,10 +79,16 @@ BANK_LEDGER/
 
 ### Authentication Routes (`/api/auth`)
 
-| Method | Endpoint | Description | Request Body | Response |
-| :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/api/auth/register` | Register a new user | `{ "name", "email", "password" }` | User details, JWT token, HTTP cookie, welcome email sent |
-| `POST` | `/api/auth/login` | Authenticate existing user | `{ "email", "password" }` | User details, JWT token, HTTP cookie |
+| Method | Endpoint | Access | Description | Request Body | Response |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/api/auth/register` | Public | Register a new user | `{ "name", "email", "password" }` | User details, JWT token, HTTP cookie, welcome email sent |
+| `POST` | `/api/auth/login` | Public | Authenticate existing user | `{ "email", "password" }` | User details, JWT token, HTTP cookie |
+
+### Account Routes (`/api/account`)
+
+| Method | Endpoint | Access | Description | Headers / Cookies | Response |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/api/account/createAccount` | 🔒 Protected | Create a new bank account | `Authorization: Bearer <token>` or `cookie: token` | Account object created with user reference |
 
 ---
 
