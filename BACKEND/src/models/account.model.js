@@ -29,9 +29,9 @@ const accountSchema = new mongoose.Schema(
 
 );
 
-accountSchema.index({ user: 1, status: 1 }) //composite index
+accountSchema.index({ userId: 1, status: 1 }) //composite index
 
 
 const accountModel = mongoose.model("Account", accountSchema);
 
-module.exports = accountModel;
+module.exports = {accountModel};

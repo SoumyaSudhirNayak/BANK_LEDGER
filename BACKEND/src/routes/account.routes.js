@@ -1,7 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const { authMiddleware } = require("../middleware/auth.middleware")
-const {createAccount}=require("../controllers/account.controller")
+const {createAccount, getAccounts}=require("../controllers/account.controller")
 
 
 
@@ -12,6 +12,7 @@ const {createAccount}=require("../controllers/account.controller")
 *- PROTECTED ROUTE 
 */
 router.post("/createAccount",authMiddleware,createAccount)
+router.post("/getAccounts",authMiddleware,getAccounts)
 
 
 module.exports = router;
