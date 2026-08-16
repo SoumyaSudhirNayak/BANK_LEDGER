@@ -12,25 +12,36 @@ A production-grade backend application for **Bank Ledger**, built with **Node.js
   - **Login (`POST /api/auth/login`)**: Secure authentication via email/password utilizing schema instance methods (`comparePassword`).
   - **System User Role (`systemuser`)**: Flag in User schema (`select: false` by default) for high-privilege system operations.
 - **Granular Authentication Middlewares (`auth.middleware.js`)**:
-  - **`authMiddleware`**: Protects standard user endpoints by verifying JWT tokens from cookies or `Authorization: Bearer <token>` headers and attaching `req.user`.
+  - **`authMiddleware`**: Protects standard user endpoints by verifying JWT tokens from cookies (`req.cookies.token`) or `Authorization: Bearer <token>` headers and attaching `req.user`.
   - **`authSystemUserMiddleware`**: Ensures endpoints (such as initial funds seeding) can only be accessed by authenticated system users.
-- **Account Management & Ledger Base (`account.model.js`)**:
+- **Account Management & Balance Calculation (`account.model.js` & `account.controller.js`)**:
   - **Create Account (`POST /api/account/createAccount`)**: Allows authenticated users to create bank accounts linked to their `userId`.
-  - **Get User Accounts (`POST /api/account/getAccounts`)**: Fetches all bank accounts owned by the logged-in user.
+  - **Get User Accounts (`GET /api/account/getAccounts`)**: Fetches all bank accounts owned by the logged-in user.
+  - **Get Account Balance (`GET /api/account/getAccountBalance/:accountId`)**: Calculates real-time account balance directly from ledger entries using MongoDB Aggregation (`totalCredit - totalDebit`).
   - Status management (`ACTIVE`, `FROZEN`, `CLOSED`) and default currency (`INR`).
   - Optimized database query indexing (including composite index `{ userId: 1, status: 1 }`).
 - **Immutable Double-Entry Ledger System (`ledger.model.js`)**:
   - Double-entry bookkeeping model creating matching `DEBIT` and `CREDIT` records for financial integrity.
   - **Strict Immutability Guard**: Pre-hooks on all update and deletion Mongoose operations (`updateOne`, `updateMany`, `findOneAndUpdate`, `deleteOne`, `deleteMany`, `remove`, `findOneAndDelete`, `findOneAndReplace`) that throw an error if ledger alteration is attempted, guaranteeing an append-only audit trail.
-- **Transaction Processing & Idempotency (`transaction.model.js`)**:
-  - Transaction model tracking `fromAccount`, `toAccount`, `amount`, `status` (`PENDING`, `COMPLETED`, `FAILED`, `REVERSED`), and unique `idempotencyKey` to prevent duplicate operations.
-  - **System Initial Funds Seeding (`POST /api/transactions/system/intial-funds`)**: Executed using **MongoDB ACID Transactions (`startSession`, `startTransaction`)** to atomically create ledger entries and commit completed status.
+- **Transaction Processing & Idempotency (`transaction.model.js` & `transaction.controller.js`)**:
+  - **10-Step Transfer Flow (`POST /api/transactions/`)**:
+    1. Validate request body parameters (`fromAccount`, `toAccount`, `amount`, `idempotencyKey`).
+    2. Check idempotency key state to prevent duplicate operations (`COMPLETED`, `FAILED`, `PENDING`, `REVERSED`).
+    3. Validate sender & recipient account status (`ACTIVE`).
+    4. Derive sender balance from ledger to verify sufficient funds.
+    5. Create transaction record with status `PENDING`.
+    6. Create `DEBIT` entry in immutable ledger.
+    7. Create `CREDIT` entry in immutable ledger.
+    8. Mark transaction status `COMPLETED`.
+    9. Commit MongoDB session transaction.
+    10. Dispatch automated email notification upon completion.
+  - **System Initial Funds Seeding (`POST /api/transactions/system/intial-funds`)**: Executed using **MongoDB ACID Transactions (`startSession`, `startTransaction`)** to atomically create initial credit ledger entries.
 - **Security & Data Protection**:
   - Automatic password hashing via Mongoose `pre('save')` hooks with `bcryptjs`.
   - Hidden password & system user flags by default (`select: false`).
 - **Automated Email Service (`email.service.js`)**:
   - Nodemailer service integrated with Gmail OAuth2 (`CLIENT_ID`, `CLIENT_SECRET`, `REFRESH_TOKEN`).
-  - Templates for registration welcome emails, successful transaction notifications, and transaction failure alerts.
+  - Triggered automatically after successful transaction execution to send receipt emails.
 
 ---
 
@@ -57,16 +68,16 @@ BANK_LEDGER/
 │   │   ├── config/
 │   │   │   └── db.js                      # Database connection setup & DNS resolver
 │   │   ├── controllers/
-│   │   │   ├── account.controller.js      # Account creation & retrieval handlers
+│   │   │   ├── account.controller.js      # Account creation, list & balance calculation handlers
 │   │   │   ├── auth.controller.js         # User registration & login logic
-│   │   │   └── transaction.controller.js  # Transaction execution & system initial funds seeding
+│   │   │   └── transaction.controller.js  # 10-Step transaction flow & initial funds seeding
 │   │   ├── middleware/
 │   │   │   └── auth.middleware.js         # User & System user JWT auth middlewares
 │   │   ├── models/
-│   │   │   ├── account.model.js          # Bank account Mongoose schema & indexing
+│   │   │   ├── account.model.js          # Bank account schema, balance aggregation & indexing
 │   │   │   ├── ledger.model.js           # Immutable double-entry ledger schema & immutability guards
 │   │   │   ├── transaction.model.js      # Transaction schema with idempotency key
-│   │   │   └── user.model.js             # User Mongoose schema, bcrypt hooks & systemuser flag
+│   │   │   └── user.model.js             # User schema, bcrypt hooks & systemuser flag
 │   │   ├── routes/
 │   │   │   ├── account.routes.js          # Account API endpoints router
 │   │   │   ├── auth.routes.js             # Auth API endpoints router
@@ -95,16 +106,17 @@ BANK_LEDGER/
 
 ### Account Routes (`/api/account`)
 
-| Method | Endpoint | Access | Description | Request Body / Headers | Response |
+| Method | Endpoint | Access | Description | Request Body / Params | Response |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/api/account/createAccount` | 🔒 User Auth | Create a new bank account | `Authorization` header or cookie | Created Account object |
-| `POST` | `/api/account/getAccounts` | 🔒 User Auth | Fetch all accounts for user | `Authorization` header or cookie | List of user accounts |
+| `POST` | `/api/account/createAccount` | 🔒 User Auth | Create a new bank account | Header token or Cookie | Created Account object |
+| `GET` | `/api/account/getAccounts` | 🔒 User Auth | Fetch all accounts for user | Header token or Cookie | List of user accounts |
+| `GET` | `/api/account/getAccountBalance/:accountId` | 🔒 User Auth | Fetch real-time account balance | URL Param: `accountId` | Account ID & calculated balance |
 
 ### Transaction Routes (`/api/transactions`)
 
 | Method | Endpoint | Access | Description | Request Body / Headers | Response |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `POST` | `/api/transactions/` | 🔒 User Auth | Create transfer transaction | `{ "fromAccount", "toAccount", "amount", "idempotencyKey" }` | Transaction details |
+| `POST` | `/api/transactions/` | 🔒 User Auth | Execute 10-step transfer transaction | `{ "fromAccount", "toAccount", "amount", "idempotencyKey" }` | Transaction details & email alert |
 | `POST` | `/api/transactions/system/intial-funds` | 🔒 System Auth | Seed initial funds into an account | `{ "toAccount", "amount", "idempotencyKey" }` | Completed transaction details |
 
 ---
