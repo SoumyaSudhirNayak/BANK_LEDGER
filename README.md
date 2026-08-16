@@ -7,13 +7,14 @@ A production-grade backend application for **Bank Ledger**, built with **Node.js
 ## 🚀 Features
 
 - **Production-Level Layered Architecture**: Clean separation of concerns across `controllers`, `services`, `models`, `routes`, `middleware`, and `config`.
-- **User Authentication & System Roles**:
+- **User Authentication & Token Blacklisting**:
   - **Registration (`POST /api/auth/register`)**: User registration with input validation, duplicate email checks, automatic password hashing, JWT generation, HTTP-only cookie assignment, and welcome email dispatch.
   - **Login (`POST /api/auth/login`)**: Secure authentication via email/password utilizing schema instance methods (`comparePassword`).
+  - **Logout & Token Blacklisting (`POST /api/auth/logout`)**: Invalidates the current JWT session by persisting the token to `tokenBlackListModel` with a 3-day automatic MongoDB TTL expiration index and clearing the HTTP-only `token` cookie.
   - **System User Role (`systemuser`)**: Flag in User schema (`select: false` by default) for high-privilege system operations.
 - **Granular Authentication Middlewares (`auth.middleware.js`)**:
-  - **`authMiddleware`**: Protects standard user endpoints by verifying JWT tokens from cookies (`req.cookies.token`) or `Authorization: Bearer <token>` headers and attaching `req.user`.
-  - **`authSystemUserMiddleware`**: Ensures endpoints (such as initial funds seeding) can only be accessed by authenticated system users.
+  - **`authMiddleware`**: Protects standard user endpoints by verifying JWT tokens from cookies (`req.cookies.token`) or `Authorization: Bearer <token>` headers, checking against blacklisted tokens, and attaching `req.user`.
+  - **`authSystemUserMiddleware`**: Ensures endpoints (such as initial funds seeding) can only be accessed by authenticated system users, with blacklisted token validation.
 - **Account Management & Balance Calculation (`account.model.js` & `account.controller.js`)**:
   - **Create Account (`POST /api/account/createAccount`)**: Allows authenticated users to create bank accounts linked to their `userId`.
   - **Get User Accounts (`GET /api/account/getAccounts`)**: Fetches all bank accounts owned by the logged-in user.
@@ -34,12 +35,13 @@ A production-grade backend application for **Bank Ledger**, built with **Node.js
     6. Create transaction record with status `PENDING`.
     7. Create `DEBIT` entry in immutable ledger.
     8. Create `CREDIT` entry in immutable ledger.
-    9. Mark transaction status `COMPLETED`.
+    9. Mark in-memory and database transaction status `COMPLETED`.
     10. Commit MongoDB session transaction.
     11. Resolve recipient user details (`toUser.name`) and dispatch email receipt.
   - **System Initial Funds Seeding (`POST /api/transactions/system/intial-funds`)**: Executed using **MongoDB ACID Transactions (`startSession`, `startTransaction`)** to atomically create initial credit ledger entries.
 - **Security & Data Protection**:
   - Automatic password hashing via Mongoose `pre('save')` hooks with `bcryptjs`.
+  - Token blacklisting on logout to prevent replay attacks (`blacklist.model.js`).
   - Strict user ownership checks on transaction creation (`403 Forbidden` protection).
   - Hidden password & system user flags by default (`select: false`).
 - **Automated Email Service (`email.service.js`)**:
@@ -72,18 +74,19 @@ BANK_LEDGER/
 │   │   │   └── db.js                      # Database connection setup & DNS resolver
 │   │   ├── controllers/
 │   │   │   ├── account.controller.js      # Account creation, list & balance calculation handlers
-│   │   │   ├── auth.controller.js         # User registration & login logic
+│   │   │   ├── auth.controller.js         # User registration, login & logout logic
 │   │   │   └── transaction.controller.js  # 10-Step transaction flow & initial funds seeding
 │   │   ├── middleware/
-│   │   │   └── auth.middleware.js         # User & System user JWT auth middlewares
+│   │   │   └── auth.middleware.js         # User & System user JWT auth & blacklist validation
 │   │   ├── models/
 │   │   │   ├── account.model.js          # Bank account schema, balance aggregation & indexing
+│   │   │   ├── blacklist.model.js        # Token blacklist schema with automatic TTL expiration
 │   │   │   ├── ledger.model.js           # Immutable double-entry ledger schema & immutability guards
 │   │   │   ├── transaction.model.js      # Transaction schema with idempotency key
 │   │   │   └── user.model.js             # User schema, bcrypt hooks & systemuser flag
 │   │   ├── routes/
 │   │   │   ├── account.routes.js          # Account API endpoints router
-│   │   │   ├── auth.routes.js             # Auth API endpoints router
+│   │   │   ├── auth.routes.js             # Auth API endpoints router (register, login, logout)
 │   │   │   └── transaction.routes.js     # Transaction API endpoints router
 │   │   ├── services/
 │   │   │   └── email.service.js           # Nodemailer transporter & email templates
@@ -106,6 +109,7 @@ BANK_LEDGER/
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `POST` | `/api/auth/register` | Public | Register a new user | `{ "name", "email", "password" }` | User details, JWT token, cookie, welcome email |
 | `POST` | `/api/auth/login` | Public | Authenticate existing user | `{ "email", "password" }` | User details, JWT token, cookie |
+| `POST` | `/api/auth/logout` | 🔒 Public / Auth | Blacklist current JWT token & clear cookie | Header token or Cookie | Logout success message |
 
 ### Account Routes (`/api/account`)
 

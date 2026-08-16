@@ -107,54 +107,62 @@ async function createTransaction(req, res) {
         })
     }
 
-    /* ** 5. Create transaction (PENDING) */
 
-    const session = await mongoose.startSession()
-    session.startTransaction()
-    const transaction = new transactionModel({
-        fromAccount: fromUserAccount._id,
-        toAccount: toUserAccount._id,
-        amount: amount,
-        idempotencyKey: idempotencyKey,
-        status: "PENDING"
-    })
 
-    /* ** 6. Create DEBIT ledger entry */
-    const debitLedgerEntry = await ledgerModel.create([{
-        account: fromUserAccount._id,
-        amount: amount,
-        transaction: transaction._id,
-        type: "DEBIT"
-    }], { session })
+    /**
+     * 5. Create transaction (PENDING)
+     */
+    try {
+        const session = await mongoose.startSession();
+        session.startTransaction();
 
-    /* ** 7. Create CREDIT ledger entry */
-    const creditLedgerEntry = await ledgerModel.create([{
-        account: toUserAccount._id,
-        amount: amount,
-        transaction: transaction._id,
-        type: "CREDIT"
-    }], { session })
+        transaction = (await transactionModel.create([{
+            fromAccount: fromUserAccount._id,
+            toAccount: toUserAccount._id,
+            amount,
+            idempotencyKey,
+            status: "PENDING"
+        }], { session }))[0];
 
-    /* ** 8. Mark transaction COMPLETED */
-    transaction.status = "COMPLETED"
-    await transaction.save({ session })
+        // Create DEBIT entry
+        await ledgerModel.create([{
+            account: fromUserAccount._id,
+            amount: amount,
+            transaction: transaction._id,
+            type: "DEBIT"
+        }], { session });
 
-    /* ** 9. Commit MongoDB session */
-    await session.commitTransaction()
-    session.endSession()
+        // Create CREDIT entry
+        await ledgerModel.create([{
+            account: toUserAccount._id,
+            amount: amount,
+            transaction: transaction._id,
+            type: "CREDIT"
+        }], { session });
 
-    /* ** 10. Send email notification */
+        // Update in-memory status AND save to MongoDB inside session
+        transaction.status = "COMPLETED";
+        await transaction.save({ session });
+
+        await session.commitTransaction();
+        session.endSession();
+
+    } catch (error) {
+        return res.status(500).json({
+            message: "Transaction failed, please retry",
+            error: error.message
+        });
+    }
+
+    // Step 10: Send email notification after successful transaction
     const toUser = await userModel.findById(toAccount);
+    await sendTransactionEmail(req.user.email, req.user.name, amount, toUser ? toUser.name : toAccount);
 
-
-    await sendTransactionEmail(req.user.email, req.user.name, amount, toUser ? toUser.name : toAccount)
-
+    // Return completed transaction object with status "COMPLETED"
     return res.status(201).json({
         message: "Transaction completed successfully",
         transaction: transaction
-    })
-
-
+    });
 }
 
 
