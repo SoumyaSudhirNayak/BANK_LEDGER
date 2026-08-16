@@ -23,25 +23,28 @@ A production-grade backend application for **Bank Ledger**, built with **Node.js
 - **Immutable Double-Entry Ledger System (`ledger.model.js`)**:
   - Double-entry bookkeeping model creating matching `DEBIT` and `CREDIT` records for financial integrity.
   - **Strict Immutability Guard**: Pre-hooks on all update and deletion Mongoose operations (`updateOne`, `updateMany`, `findOneAndUpdate`, `deleteOne`, `deleteMany`, `remove`, `findOneAndDelete`, `findOneAndReplace`) that throw an error if ledger alteration is attempted, guaranteeing an append-only audit trail.
-- **Transaction Processing & Idempotency (`transaction.model.js` & `transaction.controller.js`)**:
+- **Transaction Processing & Authorization (`transaction.model.js` & `transaction.controller.js`)**:
+  - **Strict Account Ownership Authorization**: Validates that `fromAccount` matches `req.user._id` (`HTTP 403 Forbidden` returned if a user attempts to initiate a transfer from an account they do not own).
   - **10-Step Transfer Flow (`POST /api/transactions/`)**:
     1. Validate request body parameters (`fromAccount`, `toAccount`, `amount`, `idempotencyKey`).
     2. Check idempotency key state to prevent duplicate operations (`COMPLETED`, `FAILED`, `PENDING`, `REVERSED`).
-    3. Validate sender & recipient account status (`ACTIVE`).
-    4. Derive sender balance from ledger to verify sufficient funds.
-    5. Create transaction record with status `PENDING`.
-    6. Create `DEBIT` entry in immutable ledger.
-    7. Create `CREDIT` entry in immutable ledger.
-    8. Mark transaction status `COMPLETED`.
-    9. Commit MongoDB session transaction.
-    10. Dispatch automated email notification upon completion.
+    3. Enforce account ownership (`fromAccount === req.user._id`).
+    4. Validate sender & recipient account status (`ACTIVE`).
+    5. Derive sender balance from ledger to verify sufficient funds.
+    6. Create transaction record with status `PENDING`.
+    7. Create `DEBIT` entry in immutable ledger.
+    8. Create `CREDIT` entry in immutable ledger.
+    9. Mark transaction status `COMPLETED`.
+    10. Commit MongoDB session transaction.
+    11. Resolve recipient user details (`toUser.name`) and dispatch email receipt.
   - **System Initial Funds Seeding (`POST /api/transactions/system/intial-funds`)**: Executed using **MongoDB ACID Transactions (`startSession`, `startTransaction`)** to atomically create initial credit ledger entries.
 - **Security & Data Protection**:
   - Automatic password hashing via Mongoose `pre('save')` hooks with `bcryptjs`.
+  - Strict user ownership checks on transaction creation (`403 Forbidden` protection).
   - Hidden password & system user flags by default (`select: false`).
 - **Automated Email Service (`email.service.js`)**:
   - Nodemailer service integrated with Gmail OAuth2 (`CLIENT_ID`, `CLIENT_SECRET`, `REFRESH_TOKEN`).
-  - Triggered automatically after successful transaction execution to send receipt emails.
+  - Automatically resolves recipient name (`toUser.name`) from DB for personalized receipt delivery following completed transactions.
 
 ---
 

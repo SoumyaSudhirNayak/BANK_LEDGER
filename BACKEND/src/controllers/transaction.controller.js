@@ -42,6 +42,14 @@ async function createTransaction(req, res) {
         userId: toAccount
     })
 
+
+    if (fromAccount !== req.user._id.toString()) {
+        return res.status(403).json({
+            message: "You can only transfer from your own account"
+        });
+    }
+
+
     if (!fromUserAccount || !toUserAccount) {
         return res.status(400).json({
             message: "Invalid fromAccount or toAccount"
@@ -136,8 +144,10 @@ async function createTransaction(req, res) {
     session.endSession()
 
     /* ** 10. Send email notification */
+    const toUser = await userModel.findById(toAccount);
 
-    await sendTransactionEmail(req.user.email, req.user.name, amount, toAccount)
+
+    await sendTransactionEmail(req.user.email, req.user.name, amount, toUser ? toUser.name : toAccount)
 
     return res.status(201).json({
         message: "Transaction completed successfully",
